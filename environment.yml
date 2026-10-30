@@ -1,0 +1,14 @@
+name: conda-otel-anaconda
+channels:
+  - defaults
+dependencies:
+  - python=3.14
+  - conda=26.7
+  - pip
+  - pytest<9.1
+  - opentelemetry-sdk>=1.40,<1.44
+  - opentelemetry-exporter-otlp-proto-http
+  - anaconda-anon-usage
+  - requests
+  - pip:
+      - conda-otel @ git+https://github.com/lrandersson/conda-otel
