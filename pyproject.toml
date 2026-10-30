@@ -1,0 +1,36 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling >=1.12.2"]
+
+[project]
+dependencies = [
+  "anaconda-anon-usage",
+  "conda-otel",
+  "opentelemetry-exporter-otlp-proto-http",
+  "requests",
+]
+description = "Anaconda provider for conda-otel"
+license = { file = "LICENSE" }
+name = "conda-otel-anaconda"
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["version"]
+
+[project.optional-dependencies]
+test = ["pytest<9.1"]
+
+[project.urls]
+Homepage = "https://github.com/lrandersson/conda-otel-anaconda"
+
+[project.entry-points."conda_otel.providers"]
+anaconda = "conda_otel_anaconda.provider:anaconda_provider"
+
+[tool.hatch.version]
+path = "conda_otel_anaconda/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["conda_otel_anaconda"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
