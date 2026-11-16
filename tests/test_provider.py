@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+import conda.plugins.manager as conda_manager
 import pytest
-import tomllib
+from conda.base.context import Context
+from conda.plugins.hookspec import CondaSpecs
+from conda.plugins.manager import CondaPluginManager
+from conda_otel import core
+from conda_otel import hooks as core_hooks
 from conda_otel.capture import EventName
 from conda_otel.core import Dispatcher, Event
-from conda_otel_anaconda import __version__
-from conda_otel_anaconda import provider as anaconda
 from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import (
     ExportLogsServiceRequest,
 )
+
+from conda_otel_anaconda import __version__, hooks
+from conda_otel_anaconda import provider as anaconda
 
 if TYPE_CHECKING:
     from conftest import RecordingServer
@@ -163,11 +170,32 @@ def test_conda_proxy_is_used(
     assert path == "http://telemetry.invalid/v1/logs"
 
 
-def test_provider_is_registered_for_conda_otel() -> None:
-    """The entry point in pyproject.toml must point to the provider function."""
+@pytest.mark.parametrize(
+    ("env_value", "expected"),
+    [("true", ["anaconda"]), ("false", []), (None, [])],
+)
+def test_provider_is_enabled_only_by_setting(
+    monkeypatch: pytest.MonkeyPatch, env_value: str | None, expected: list[str]
+) -> None:
+    """The provider loads only when the anaconda setting is true."""
+    # Use a private manager. The global one loads every installed conda plugin.
+    # It is also cached and shared between tests.
+    manager = CondaPluginManager()
+    manager.add_hookspecs(CondaSpecs)
+    manager.register(core_hooks)
+    manager.register(hooks)
+    monkeypatch.setattr(conda_manager, "get_plugin_manager", lambda: manager)
+    if env_value is None:
+        monkeypatch.delenv("CONDA_PLUGINS_CONDA_OTEL_ANACONDA", raising=False)
+    else:
+        monkeypatch.setenv("CONDA_PLUGINS_CONDA_OTEL_ANACONDA", env_value)
+    context = Context(search_path=())
+    providers = core.load_providers(context)
+    assert [p.name for p in providers] == expected
+
+
+def test_conda_entry_point_targets_hooks() -> None:
+    """The package registers its hooks module as a conda plugin."""
     data = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
-    target = data["project"]["entry-points"]["conda_otel.providers"]["anaconda"]
-    module, _, attr = target.partition(":")
-    assert (
-        getattr(__import__(module, fromlist=[attr]), attr) is anaconda.anaconda_provider
-    )
+    target = data["project"]["entry-points"]["conda"]["conda-otel-anaconda"]
+    assert target == "conda_otel_anaconda.hooks"
