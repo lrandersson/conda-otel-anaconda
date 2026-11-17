@@ -19,8 +19,8 @@ dynamic = ["version"]
 [project.urls]
 Homepage = "https://github.com/lrandersson/conda-otel-anaconda"
 
-[project.entry-points."conda_otel.providers"]
-anaconda = "conda_otel_anaconda.provider:anaconda_provider"
+[project.entry-points.conda]
+conda-otel-anaconda = "conda_otel_anaconda.hooks"
 
 [tool.hatch.version]
 path = "conda_otel_anaconda/__init__.py"
