@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import TYPE_CHECKING
 
 import pytest
+
 from conda_otel_anaconda import provider
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class RecordingServer(HTTPServer):
