@@ -4,7 +4,7 @@ import json
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import conda.plugins.manager as conda_manager
 import pytest
@@ -23,6 +23,8 @@ from conda_otel_anaconda import __version__, hooks
 from conda_otel_anaconda import provider as anaconda
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from conftest import RecordingServer
 
 SUCCESS = Event(

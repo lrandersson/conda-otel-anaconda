@@ -5,16 +5,19 @@ from __future__ import annotations
 import json
 import platform
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import requests
 from anaconda_anon_usage import tokens
 from conda_otel.capture import EventName
 from conda_otel.core import Event, Provider
-from conda_otel_anaconda import __version__
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 
+from conda_otel_anaconda import __version__
+
 if TYPE_CHECKING:
+    from typing import Any
+
     from conda.base.context import Context
 
 ENDPOINT = "https://public.telemetry.anaconda.com/v1/logs"
