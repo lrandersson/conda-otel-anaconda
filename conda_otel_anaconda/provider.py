@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 
 import requests
 from anaconda_anon_usage import tokens
-from conda_otel.capture import EventName
 from conda_otel.core import Event, Provider
+from conda_otel.events import Command, EventName, EventSelector, Outcome
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 
 from conda_otel_anaconda import __version__
@@ -154,6 +154,11 @@ INSTALL_EVENTS = {
     EventName.PACKAGES_NOT_FOUND: install_pnfe,
     EventName.SUCCESS: install_success,
 }
+#: Exact subscriptions for the events in INSTALL_EVENTS.
+EVENTS = [
+    EventSelector.exact(Command.INSTALL, Outcome.PACKAGES_NOT_FOUND),
+    EventSelector.exact(Command.INSTALL, Outcome.SUCCESS),
+]
 
 
 def transform(event: Event) -> Event | None:
@@ -191,4 +196,5 @@ def anaconda_provider(context: Context, endpoint: str = ENDPOINT) -> Provider:
             **get_aau_attributes(),
         },
         transform=transform,
+        events=EVENTS,
     )
