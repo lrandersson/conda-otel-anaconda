@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,11 +14,9 @@ from conda.plugins.hookspec import CondaSpecs
 from conda.plugins.manager import CondaPluginManager
 from conda_otel import core
 from conda_otel import hooks as core_hooks
-from conda_otel.capture import EventName
 from conda_otel.core import Dispatcher, Event
-from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import (
-    ExportLogsServiceRequest,
-)
+from conda_otel.events import EventName, matched_events
+from conftest import decode_request
 
 from conda_otel_anaconda import __version__, hooks
 from conda_otel_anaconda import provider as anaconda
@@ -50,44 +49,59 @@ PNFE = Event(
 )
 
 
-def test_install_success_signal() -> None:
-    """A success event becomes an install.success signal.
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            SUCCESS,
+            {
+                "command": "install",
+                "event.schema_version": "1",
+                "install.channels": ["conda-forge", "other"],
+                "log.event.name": "install.success",
+                "install.channel_priority": "flexible",
+                "requested.packages": ["numpy"],
+                "resolved.packages": ["numpy=1.0=0", "python=3.12=0"],
+                "truncated": False,
+            },
+            id="success",
+        ),
+        pytest.param(
+            PNFE,
+            {
+                "command": "install",
+                "event.schema_version": "1",
+                "install.channels": ["defaults"],
+                "log.event.name": "install.pnfe",
+                "install.channel_priority": "strict",
+                "requested.packages": ["nope"],
+                "exception.name": "PackagesNotFoundInChannelsError",
+                "exception.missing_specs": ["nope"],
+                "truncated": False,
+            },
+            id="packages-not-found",
+        ),
+    ],
+)
+def test_install_signal(source: Event, expected: dict[str, Any]) -> None:
+    """Check the signal name and attributes for each install outcome."""
+    event = anaconda.transform(source)
+    assert event is not None
+    assert event.name == expected["log.event.name"]
+    assert event.attributes == expected
 
-    Unknown channels become 'other'.
-    """
-    event = anaconda.transform(SUCCESS)
-    assert event.name == "install.success"
-    assert event.attributes == {
-        "command": "install",
-        "event.schema_version": "1",
-        "install.channels": ["conda-forge", "other"],
-        "log.event.name": "install.success",
-        "install.channel_priority": "flexible",
-        "requested.packages": ["numpy"],
-        "resolved.packages": ["numpy=1.0=0", "python=3.12=0"],
-        "truncated": False,
-    }
 
-
-def test_install_pnfe_signal() -> None:
-    """A packages-not-found event becomes an install.pnfe signal."""
-    event = anaconda.transform(PNFE)
-    assert event.name == "install.pnfe"
-    assert event.attributes == {
-        "command": "install",
-        "event.schema_version": "1",
-        "install.channels": ["defaults"],
-        "log.event.name": "install.pnfe",
-        "install.channel_priority": "strict",
-        "requested.packages": ["nope"],
-        "exception.name": "PackagesNotFoundInChannelsError",
-        "exception.missing_specs": ["nope"],
-        "truncated": False,
-    }
+def test_subscriptions_match_handler_keys() -> None:
+    """The provider subscribes to exactly the events it handles."""
+    provider = anaconda.anaconda_provider(
+        SimpleNamespace(proxy_servers={}), "http://127.0.0.1:9/v1/logs"
+    )
+    expected = {"install.success", "install.packages_not_found"}
+    assert matched_events(provider.events) == set(anaconda.INSTALL_EVENTS) == expected
 
 
 def test_long_lists_are_truncated() -> None:
-    """A list over the limit is cut, and the signal says so."""
+    """Trim lists over the item limit and set the truncated flag."""
     many = Event(
         EventName.SUCCESS,
         {
@@ -101,7 +115,7 @@ def test_long_lists_are_truncated() -> None:
 
 
 def test_byte_limit_cuts_a_short_list() -> None:
-    """A list under the item limit is still cut when it is over the byte limit."""
+    """The byte limit can trim a list even when it fits the item limit."""
     items = ["x" * 30] * 20
     assert len(items) < anaconda.LIST_ITEM_LIMIT
     kept, truncated = anaconda.truncate(items)
@@ -137,23 +151,66 @@ def test_signals_reach_the_endpoint(otlp_server: RecordingServer) -> None:
     dispatcher.emit(Event("other", {}))
     assert dispatcher.flush() == {"anaconda": True}
 
-    names: list[str] = []
+    records: list[dict[str, Any]] = []
     resource: dict[str, Any] = {}
     for _path, _type, body in otlp_server.received:
-        request = ExportLogsServiceRequest()
-        request.ParseFromString(body)
-        resource = {
-            kv.key: kv.value.string_value
-            for kv in request.resource_logs[0].resource.attributes
-        }
-        for record in request.resource_logs[0].scope_logs[0].log_records:
-            names.append(record.body.string_value)
-    assert sorted(names) == ["install.pnfe", "install.success"]
-    assert resource["platform"] == "conda"
-    assert resource["client.sdk.version"] == __version__
-    assert resource["schema.version"] == anaconda.RESOURCE_SCHEMA_VERSION == "0.1.0"
-    assert resource["parameters"] == "{}"
-    assert resource["aau.client.token"] == "test-client-token"
+        batch, resource = decode_request(body)
+        records.extend(batch)
+    assert len(records) == 2
+    by_name = {record["body"]: record for record in records}
+    assert by_name == {
+        "install.success": {
+            "body": "install.success",
+            "command": "install",
+            "event.schema_version": "1",
+            "install.channels": ["conda-forge", "other"],
+            "log.event.name": "install.success",
+            "install.channel_priority": "flexible",
+            "requested.packages": ["numpy"],
+            "resolved.packages": ["numpy=1.0=0", "python=3.12=0"],
+            "truncated": False,
+        },
+        "install.pnfe": {
+            "body": "install.pnfe",
+            "command": "install",
+            "event.schema_version": "1",
+            "install.channels": ["defaults"],
+            "log.event.name": "install.pnfe",
+            "install.channel_priority": "strict",
+            "requested.packages": ["nope"],
+            "exception.name": "PackagesNotFoundInChannelsError",
+            "exception.missing_specs": ["nope"],
+            "truncated": False,
+        },
+    }
+    # Skip keys that change per process or per SDK version.
+    stable = {
+        key: value
+        for key, value in resource.items()
+        if not key.startswith("telemetry.sdk.")
+        and key not in {"service.version", "service.instance.id"}
+    }
+    assert stable == {
+        "service.name": "conda-otel-anaconda",
+        "platform": "conda",
+        "os.type": platform.system(),
+        "python.version": platform.python_version(),
+        "client.sdk.version": __version__,
+        "schema.version": anaconda.RESOURCE_SCHEMA_VERSION,
+        "parameters": "{}",
+        "aau.client.token": "test-client-token",
+        "aau.installer.tokens": '["test-installer-token"]',
+    }
+
+
+def test_anaconda_endpoint_is_blocked(loopback_only: list[str]) -> None:
+    """The test fixture blocks connections to the production endpoint."""
+    dispatcher = Dispatcher(
+        [anaconda.anaconda_provider(SimpleNamespace(proxy_servers={}))]
+    )
+    dispatcher.emit(SUCCESS)
+    assert dispatcher.flush() == {"anaconda": False}
+    assert "public.telemetry.anaconda.com" in loopback_only
 
 
 def test_conda_proxy_is_used(
