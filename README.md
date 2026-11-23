@@ -8,9 +8,9 @@ The Anaconda provider for [conda-otel](https://github.com/lrandersson/conda-otel
 
 The provider is off by default. Users opt in with `conda_otel_anaconda: true` under `plugins` in `.condarc`. The core setting `conda_otel` is on by default but sends nothing without an enabled provider.
 
-The provider sends logs to `https://public.telemetry.anaconda.com/v1/logs`. The tables below describe the current payload. Field purposes and justification are drafts pending sign-off; the code does not state them.
+The provider sends logs to `https://public.telemetry.anaconda.com/v1/logs`. The tables list exported log and resource attributes. The code does not state field purposes or justification; these remain drafts pending sign-off.
 
-### Install Success
+### Install success
 
 | Attribute | Source | Processing | Purpose |
 | --- | --- | --- | --- |
@@ -23,7 +23,7 @@ The provider sends logs to `https://public.telemetry.anaconda.com/v1/logs`. The 
 | `resolved.packages` | Package metadata | Sends `name=version=build`; cuts the list to 50 items and 500 bytes. | Draft: pending sign-off. To be confirmed. |
 | `truncated` | Provider list processing | True if any list was cut. | Draft: pending sign-off. To be confirmed. |
 
-### Packages Not Found
+### Packages not found
 
 | Attribute | Source | Processing | Purpose |
 | --- | --- | --- | --- |
@@ -39,7 +39,7 @@ The provider sends logs to `https://public.telemetry.anaconda.com/v1/logs`. The 
 
 The byte limit for every list is measured after JSON encoding in UTF-8.
 
-### Resource Attributes
+### Resource attributes
 
 Resource attributes are attached to both signals. AAU values come from `anaconda-anon-usage`; `None` values are omitted, lists and dictionaries become JSON strings, and other values become strings.
 
@@ -66,11 +66,11 @@ Resource attributes are attached to both signals. AAU values come from `anaconda
 | `telemetry.sdk.version` | OpenTelemetry SDK | Added by the SDK. | Draft: pending sign-off. To be confirmed. |
 | `service.instance.id` | OpenTelemetry SDK | Added by the SDK. | Draft: pending sign-off. To be confirmed. |
 
-### Package Data Justification
+### Package data justification
 
-Package names: Draft: pending sign-off. To be confirmed; exact names can identify private packages.
-Package versions: Draft: pending sign-off. To be confirmed; resolved versions are sent in addition to names.
-Package builds: Draft: pending sign-off. To be confirmed; resolved build strings are sent in addition to names and versions.
+- Package names: Draft: pending sign-off. To be confirmed; exact names can identify private packages.
+- Package versions: Draft: pending sign-off. To be confirmed; resolved versions are sent in addition to names.
+- Package builds: Draft: pending sign-off. To be confirmed; resolved build strings are sent in addition to names and versions.
 
 ## License
 
