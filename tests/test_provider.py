@@ -29,14 +29,16 @@ if TYPE_CHECKING:
 
 # Synthetic test data. Every secret contains SECRET.
 SECRET = "SECRET"
-#: Configured channels: one private URL with every kind of secret, one local path, one public name.
+#: A private URL with credentials, a local path and a public channel name.
 RAW_CHANNELS = (
     "https://user:SECRET@host.example/t/SECRET_TO.KEN/chan?token=SECRET",
     "file:///home/SECRET/chan",
     "conda-forge",
 )
 REDACTED_CHANNELS = ["https://host.example/chan", "<local>", "conda-forge"]
-PRIVATE_PACKAGE = "x-internal-tool"  # private names reach the export by design (see README)
+PRIVATE_PACKAGE = (
+    "x-internal-tool"  # private names reach the export by design (see README)
+)
 PRIVATE_RECORD = "x-internal-tool=1.0=0"
 MISSING_PACKAGE = "x-unreleased-tool"
 SUCCESS = Event(
@@ -69,10 +71,13 @@ class FooPluginError(PackagesNotFoundInChannelsError):
 def test_synthetic_secrets_do_not_reach_the_export(
     monkeypatch: pytest.MonkeyPatch, otlp_server: RecordingServer
 ) -> None:
-    """Secrets are gone at provider input and in the OTLP export, and private channels become "other"."""
+    """Input and export contain no secrets; private channels export as "other"."""
     context = SimpleNamespace(
-        plugins=SimpleNamespace(conda_otel=True), channels=RAW_CHANNELS,
-        channel_priority="strict", dry_run=False, download_only=False,
+        plugins=SimpleNamespace(conda_otel=True),
+        channels=RAW_CHANNELS,
+        channel_priority="strict",
+        dry_run=False,
+        download_only=False,
     )
     monkeypatch.setattr(capture, "context", context)
     monkeypatch.setattr(sources, "context", context)
@@ -93,7 +98,8 @@ def test_synthetic_secrets_do_not_reach_the_export(
     capture.capture_command("install")
     capture.capture_requested_packages(frozenset({PRIVATE_PACKAGE}), frozenset())
     capture.capture_resolved_packages(
-        "repodata.json", (),
+        "repodata.json",
+        (),
         (SimpleNamespace(name=PRIVATE_PACKAGE, version="1.0", build="0"),),
     )
     capture.report_success("install")
@@ -104,13 +110,17 @@ def test_synthetic_secrets_do_not_reach_the_export(
 
     assert [event.attributes for event in seen] == [
         {
-            "command": "install", "channels": REDACTED_CHANNELS,
-            "channel_priority": "strict", "requested_packages": [PRIVATE_PACKAGE],
+            "command": "install",
+            "channels": REDACTED_CHANNELS,
+            "channel_priority": "strict",
+            "requested_packages": [PRIVATE_PACKAGE],
             "resolved_packages": [PRIVATE_RECORD],
         },
         {
-            "command": "install", "channels": REDACTED_CHANNELS,
-            "channel_priority": "strict", "requested_packages": [MISSING_PACKAGE],
+            "command": "install",
+            "channels": REDACTED_CHANNELS,
+            "channel_priority": "strict",
+            "requested_packages": [MISSING_PACKAGE],
             "missing_packages": [MISSING_PACKAGE],
             "exception_name": "PackagesNotFoundInChannelsError",
         },
