@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING
 import conda.plugins.manager as conda_manager
 import pytest
 from conda.base.context import Context
+from conda.exceptions import PackagesNotFoundInChannelsError
 from conda.plugins.hookspec import CondaSpecs
 from conda.plugins.manager import CondaPluginManager
-from conda_otel import core
+from conda_otel import capture, core, sources
 from conda_otel import hooks as core_hooks
 from conda_otel.core import Dispatcher, Event
 from conda_otel.events import EventName, matched_events
@@ -26,6 +27,18 @@ if TYPE_CHECKING:
 
     from conftest import RecordingServer
 
+# Synthetic test data. Every secret contains SECRET.
+SECRET = "SECRET"
+#: Configured channels: one private URL with every kind of secret, one local path, one public name.
+RAW_CHANNELS = (
+    "https://user:SECRET@host.example/t/SECRET_TO.KEN/chan?token=SECRET",
+    "file:///home/SECRET/chan",
+    "conda-forge",
+)
+REDACTED_CHANNELS = ["https://host.example/chan", "<local>", "conda-forge"]
+PRIVATE_PACKAGE = "x-internal-tool"  # private names reach the export by design (see README)
+PRIVATE_RECORD = "x-internal-tool=1.0=0"
+MISSING_PACKAGE = "x-unreleased-tool"
 SUCCESS = Event(
     EventName.SUCCESS,
     {
@@ -47,6 +60,76 @@ PNFE = Event(
         "exception_name": "PackagesNotFoundInChannelsError",
     },
 )
+
+
+class FooPluginError(PackagesNotFoundInChannelsError):
+    """A plugin's own subclass of the not-found error."""
+
+
+def test_synthetic_secrets_do_not_reach_the_export(
+    monkeypatch: pytest.MonkeyPatch, otlp_server: RecordingServer
+) -> None:
+    """Secrets are gone at provider input and in the OTLP export, and private channels become "other"."""
+    context = SimpleNamespace(
+        plugins=SimpleNamespace(conda_otel=True), channels=RAW_CHANNELS,
+        channel_priority="strict", dry_run=False, download_only=False,
+    )
+    monkeypatch.setattr(capture, "context", context)
+    monkeypatch.setattr(sources, "context", context)
+    provider = anaconda.anaconda_provider(
+        SimpleNamespace(proxy_servers={}), f"{otlp_server.endpoint}/v1/logs"
+    )
+    seen = []
+    original = provider.transform
+
+    def transform(event: Event) -> Event | None:
+        """Record the input before the provider changes it."""
+        seen.append(event)
+        return original(event)
+
+    provider.transform = transform
+    dispatcher = Dispatcher([provider])
+    monkeypatch.setattr(capture, "get_dispatcher", lambda: dispatcher)
+    capture.capture_command("install")
+    capture.capture_requested_packages(frozenset({PRIVATE_PACKAGE}), frozenset())
+    capture.capture_resolved_packages(
+        "repodata.json", (),
+        (SimpleNamespace(name=PRIVATE_PACKAGE, version="1.0", build="0"),),
+    )
+    capture.report_success("install")
+    capture.capture_command("install")
+    capture.capture_requested_packages(frozenset({MISSING_PACKAGE}), frozenset())
+    exc = FooPluginError([MISSING_PACKAGE], ["conda-forge"])
+    capture.report_error(SimpleNamespace(exc_value=exc, exc_type=type(exc)))
+
+    assert [event.attributes for event in seen] == [
+        {
+            "command": "install", "channels": REDACTED_CHANNELS,
+            "channel_priority": "strict", "requested_packages": [PRIVATE_PACKAGE],
+            "resolved_packages": [PRIVATE_RECORD],
+        },
+        {
+            "command": "install", "channels": REDACTED_CHANNELS,
+            "channel_priority": "strict", "requested_packages": [MISSING_PACKAGE],
+            "missing_packages": [MISSING_PACKAGE],
+            "exception_name": "PackagesNotFoundInChannelsError",
+        },
+    ]
+    records = []
+    for _path, _type, body in otlp_server.received:
+        batch, _resource = decode_request(body)
+        records.extend(batch)
+        for value in (SECRET, "host.example", "FooPluginError"):
+            assert value.encode("utf-8") not in body
+    assert len(records) == 2
+    by_name = {record["body"]: record for record in records}
+    success = by_name["install.success"]
+    assert success["install.channels"] == ["other", "other", "conda-forge"]
+    assert success["requested.packages"] == [PRIVATE_PACKAGE]
+    assert success["resolved.packages"] == [PRIVATE_RECORD]
+    not_found = by_name["install.pnfe"]
+    assert not_found["exception.name"] == "PackagesNotFoundInChannelsError"
+    assert not_found["exception.missing_specs"] == [MISSING_PACKAGE]
 
 
 @pytest.mark.parametrize(
